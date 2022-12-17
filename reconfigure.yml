@@ -1,0 +1,45 @@
+---
+- hosts: gitlab
+  become: true
+  tasks:
+    - name: Include Vars File
+      include_vars: ./vars.yml
+
+    - name: Create Certbot Container
+      community.docker.docker_container:
+       name: "certbot"
+       image: "certbot/certbot:{{ certbot_version }}"
+       ports:
+        - "80:80"
+        - "443:443"
+       command: >-
+        certonly --standalone -d "{{domain}}" -m "{{email}}" --agree-tos  --non-interactive --keep  --cert-name "gitlab.viratarh.ir"
+       volumes:
+        - certbot-ssl-data:/etc/letsencrypt:rw
+
+    - name: Copy Config File On Gitlab Volume
+      ansible.builtin.copy:
+       src: ./files/reconfigure.rb
+       dest: /var/lib/docker/volumes/gitlab-ce-data/_data/gitlab.rb
+
+    - name: Copy Fullchain File On Gtilab Volume
+      ansible.builtin.copy:
+       src: /var/lib/docker/volumes/certbot-ssl-data/_data/archive/gitlab.viratarh.ir/fullchain1.pem
+       dest: /var/lib/docker/volumes/gitlab-ce-data/_data/
+       remote_src: yes
+
+
+    - name: Copy PrivateKey File On Gitlab Volume
+      ansible.builtin.copy:
+       src: /var/lib/docker/volumes/certbot-ssl-data/_data/archive/gitlab.viratarh.ir/privkey1.pem
+       dest: /var/lib/docker/volumes/gitlab-ce-data/_data/
+       remote_src: yes
+
+    - name: Gitlab Reconfigure
+      shell: "docker exec -it gitlab-ce gitlab-ctl reconfigure"
+
+    - name: Restart
+      docker_container:
+       name: "gitlab-ce"
+       state: started
+       restart: yes

@@ -1,0 +1,8 @@
+########VPlaybook#############
+docker_version: 5:20.10.21~3-0~debian-bullseye
+#########Git#################
+gitlab_version: 15.4.4-ce.0
+domain: gitlab.example.com
+email: par.shams90@gmail.com
+##########Certbot###########
+certbot_version: v1.32.0

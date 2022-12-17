@@ -1,0 +1,125 @@
+---
+- hosts: gitlab
+  become: true
+  tasks:
+    - name: Include Vars File
+      include_vars: ./vars.yml
+
+    - name: Update Repositories
+      apt:
+       update_cache: yes
+
+    - name: Install Required System Packages
+      apt:
+       pkg:
+        - apt-transport-https
+        - ca-certificates
+        - curl
+        - software-properties-common
+        - python3-pip
+        - virtualenv
+        - python3-setuptools
+        - gnupg
+        - lsb-release
+       state: present
+
+
+    - name: Remove Old Key Docker Files
+      ansible.builtin.file:
+       path: /etc/apt/keyrings/docker.gpg
+       state: absent
+
+    - name: Remove Old Source Docker Files
+      ansible.builtin.file:
+       path: /etc/apt/sources.list.d/docker.list
+       state: absent
+
+    - name: Create Directory For keyrings
+      file:
+       path: /etc/apt/keyrings
+       state: directory
+
+
+    - name: Add Docker GPG apt Key
+      shell: 'curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg'
+
+    - name: Add Docker Repository
+      shell: 'echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian  $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null'
+
+    - name: Update Repositories After Docker Repository
+      apt:
+       update_cache: yes
+
+    - name:  Install Docker-ce
+      apt:
+       name: "docker-ce={{docker_version}}"
+
+    - name: Create Certbot Volume
+      docker_volume:
+       name: certbot-ssl-data
+
+    - name: Create Gitlab Volume
+      docker_volume:
+       name: gitlab-ce-data
+       
+
+   - name: Create Network
+     docker_network:
+       name: vira
+
+
+    - name: Create Certbot Container
+      community.docker.docker_container:
+       name: "certbot"
+       image: "certbot/certbot:{{ certbot_version }}"
+       ports:
+        - "80:80"
+        - "443:443"
+       command: >-
+        certonly --standalone -d "{{ domain }}" -m "{{ email }}" --agree-tos  --non-interactive --keep  --cert-name "gitlab.example.com"
+       volumes:
+        - certbot-ssl-data:/etc/letsencrypt:rw
+
+    - name: Copy Config File On Gitlab Volume
+      ansible.builtin.copy:
+       src: ./files/gitlab.rb
+       dest: /var/lib/docker/volumes/gitlab-ce-data/_data/gitlab.rb
+
+    - name: Copy Fullchain File On Gtilab Volume
+      ansible.builtin.copy:
+       src: /var/lib/docker/volumes/certbot-ssl-data/_data/archive/gitlab.example.com/fullchain1.pem
+       dest: /var/lib/docker/volumes/gitlab-ce-data/_data/
+       remote_src: yes
+
+
+    - name: Copy PrivateKey File On Gitlab Volume
+      ansible.builtin.copy:
+       src: /var/lib/docker/volumes/certbot-ssl-data/_data/archive/gitlab.example.com/privkey1.pem
+       dest: /var/lib/docker/volumes/gitlab-ce-data/_data/
+       remote_src: yes
+
+
+    - name: Create Gitlab Container
+      docker_container:
+       name: "gitlab-ce"
+       image: "gitlab/gitlab-ce:{{gitlab_version}}"
+       restart_policy: "always"
+       restart: true
+       ports:
+        - "80:80"
+        - "443:443"
+        - "5050:5050"
+       networks:
+       - name: vira
+       volumes:
+        - gitlab-ce-data:/etc/gitlab
+
+
+    - name: Gitlab Reconfigure
+      shell: "docker exec -it gitlab-ce gitlab-ctl reconfigure"
+
+    - name: Restart
+      docker_container:
+       name: "gitlab-ce"
+       state: started
+       restart: yes
